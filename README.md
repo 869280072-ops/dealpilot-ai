@@ -71,6 +71,10 @@ pnpm dev
 
 Open http://localhost:3000. Existing sessions from before the P0 credential-version change must sign in again.
 
+## P1 blocker fixes
+
+See [P1 blocker fix report](docs/P1-BLOCKER-FIXES.md) for B1–B3, migration 0003, idempotency keys, durable AI request deduplication, rolling quotas and repeatable regression scripts. Apply migrations before running this branch. Successful same-version analyses are reused; failed/uncertain calls are not automatically retried. Real model tests remain opt-in and were not performed.
+
 ## P1 workspace
 
 After migrating a dedicated local development database and signing up, open `/dashboard/workbench`. As team owner, add service prices in the required currency, then load a fictional demo, save it, analyze it and generate a draft. Review and save edits before explicitly confirming. Confirmed quotations are locked.

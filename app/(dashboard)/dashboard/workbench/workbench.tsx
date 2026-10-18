@@ -1,7 +1,7 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { Sparkles, FileText, History, ListChecks, Plus, ArrowRight, CheckCircle2 } from 'lucide-react';
-import { calculateQuote, demoCases, serviceLabels, type QuoteInput } from '@/lib/dealpilot/domain';
+import { calculateQuote, demoCases, serviceLabels, ANALYSIS_POLICY_VERSION, type QuoteInput } from '@/lib/dealpilot/domain';
 import type { createDealPilotService } from '@/lib/dealpilot/service';
 import './workbench.css';
 
@@ -18,6 +18,10 @@ export default function Workbench() {
   const [selected, setSelected] = useState<number>();
   const [form, setForm] = useState(blank);
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false);
+  const editorEpoch = useRef(0);
+  const [editing, setEditing] = useState<{ id: number; revision: number }>();
+  const requestKeys = useRef(new Map<string, string>());
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [currency, setCurrency] = useState('CNY');
@@ -35,19 +39,31 @@ export default function Workbench() {
     return () => controller.abort();
   }, []);
   async function execute(command: unknown, success: string) {
+    if (inFlight.current) return null;
+    inFlight.current = true;
+    const action = (command as { action: string }).action;
+    const key = action === 'saveCatalog' || action === 'generateQuote' ? JSON.stringify(command) : null;
+    let body = command;
+    if (key) {
+      const requestId = requestKeys.current.get(key) ?? crypto.randomUUID();
+      requestKeys.current.set(key, requestId);
+      body = { ...(command as object), requestId };
+    }
     setBusy(true); setError(''); setNotice('');
     try {
-      const response = await fetch('/api/dealpilot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(command) });
+      const response = await fetch('/api/dealpilot', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? '操作失败');
-      await load(); setNotice(success); return result;
+      await load();
+      if (key) requestKeys.current.delete(key);
+      setNotice(success); return result;
     } catch (e) { setError(e instanceof Error ? e.message : '操作失败'); return null; }
-    finally { setBusy(false); }
+    finally { inFlight.current = false; setBusy(false); }
   }
   const current = workspace?.requirements.find(r => r.id === selected);
-  const analysis = workspace?.analyses.find(a => a.requirementId === selected && a.revision === current?.revision);
+  const analysis = workspace?.analyses.find(a => a.requirementId === selected && a.revision === current?.revision && a.policyVersion === ANALYSIS_POLICY_VERSION);
   const quotes = workspace?.quotations ?? [];
-  function choose(r: Requirement) { setSelected(r.id); setForm({ title: r.title, content: r.content, service: r.service, language: r.language }); setNotice(''); }
+  function choose(r: Requirement) { if (inFlight.current) return; editorEpoch.current++; setEditing({ id: r.id, revision: r.revision }); setSelected(r.id); setForm({ title: r.title, content: r.content, service: r.service, language: r.language }); setNotice(''); }
   const tabs = [{ id: 'requirements', label: '客户需求', icon: FileText }, { id: 'analysis', label: 'AI 需求分析', icon: Sparkles }, { id: 'quotes', label: '智能报价', icon: ListChecks }, { id: 'history', label: '历史记录', icon: History }, { id: 'catalog', label: '服务价目表', icon: Plus }];
   return <div className="dp">
     <header className="dp-header"><div><p className="dp-eyebrow">DEALPILOT AI / WORKSPACE</p><h1>让需求更清晰，让报价更有据。</h1><p>从客户的一句话，到你确认的专业报价。</p></div><span className="dp-mode">{workspace?.mode === 'live' ? '● 真实模型模式' : '◌ Demo 演示模式'}</span></header>
@@ -56,20 +72,22 @@ export default function Workbench() {
     {error && <div role="alert" className="dp-error">{error} <button onClick={() => load().catch(e => setError(e.message))}>重新加载</button></div>}
     {notice && <div role="status" className="dp-notice">{notice}</div>}
     {!workspace && !error && <p role="status">正在加载工作台…</p>}
-    <div className="dp-columns"><aside className="dp-panel dp-list"><div className="dp-panel-title"><h2>我的客户需求</h2><button aria-label="新建需求" onClick={() => { setSelected(undefined); setForm(blank); setTab('requirements'); }}><Plus size={18}/></button></div>
+    <div className="dp-columns"><aside className="dp-panel dp-list"><div className="dp-panel-title"><h2>我的客户需求</h2><button aria-label="新建需求" disabled={busy} onClick={() => { editorEpoch.current++; setEditing(undefined); setSelected(undefined); setForm(blank); setTab('requirements'); }}><Plus size={18}/></button></div>
       {workspace?.requirements.length === 0 && <p className="dp-muted">还没有需求。创建第一条，或载入下方虚构案例。</p>}
-      {workspace?.requirements.map(r => <button className={`dp-requirement ${selected === r.id ? 'active' : ''}`} key={r.id} onClick={() => choose(r)}><strong>{r.title}</strong><span>{serviceLabels[r.service as keyof typeof serviceLabels]} · V{r.revision}</span><small>{date(r.updatedAt)}</small></button>)}
-      <div className="dp-demos"><p>虚构客户演示案例</p>{demoCases.map(c => <button key={c.title} onClick={() => { setSelected(undefined); setForm(c); setTab('requirements'); }}>载入 {c.title}<ArrowRight size={13}/></button>)}</div>
+      {workspace?.requirements.map(r => <button className={`dp-requirement ${selected === r.id ? 'active' : ''}`} key={r.id} disabled={busy} onClick={() => choose(r)}><strong>{r.title}</strong><span>{serviceLabels[r.service as keyof typeof serviceLabels]} · V{r.revision}</span><small>{date(r.updatedAt)}</small></button>)}
+      <div className="dp-demos"><p>虚构客户演示案例</p>{demoCases.map(c => <button key={c.title} disabled={busy} onClick={() => { editorEpoch.current++; setEditing(undefined); setSelected(undefined); setForm(c); setTab('requirements'); }}>载入 {c.title}<ArrowRight size={13}/></button>)}</div>
     </aside><section className="dp-main">
-      {tab === 'requirements' && <form className="dp-panel" onSubmit={async e => { e.preventDefault(); const result = await execute({ action: 'saveRequirement', ...(current ? { id: current.id, revision: current.revision } : {}), data: form }, '需求已保存。修改后请重新分析；历史报价会保留。'); if (result) setSelected(result.id); }}>
+      {tab === 'requirements' && <form className="dp-panel" onSubmit={async e => { e.preventDefault(); const epoch = editorEpoch.current; const result = await execute({ action: 'saveRequirement', ...(editing ?? {}), data: form }, '需求已保存。修改后请重新分析；历史报价会保留。'); if (result && epoch === editorEpoch.current) { setSelected(result.id); setEditing({ id: result.id, revision: result.revision }); setForm({ title: result.title, content: result.content, service: result.service, language: result.language }); } }}>
+        <fieldset disabled={busy}>
         <div className="dp-panel-title"><div><p className="dp-eyebrow">01 / REQUIREMENTS</p><h2>{current ? '编辑客户需求' : '创建客户需求'}</h2></div><span className="dp-chip">仅本人可见</span></div>
         <label>需求名称<input required maxLength={120} value={form.title} onChange={e => setForm({ ...form, title: e.target.value })} placeholder="例如：青禾咖啡品牌网站"/></label>
         <div className="dp-row"><label>服务类型<select value={form.service} onChange={e => setForm({ ...form, service: e.target.value })}>{Object.entries(serviceLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label><label>分析与报价语言<select value={form.language} onChange={e => setForm({ ...form, language: e.target.value })}><option value="zh">中文</option><option value="en">English</option></select></label></div>
         <label>客户需求原文<textarea required minLength={5} maxLength={12000} rows={9} value={form.content} onChange={e => setForm({ ...form, content: e.target.value })} placeholder="粘贴中文或英文需求。可以包含服务范围、预算、币种、期望交期与核心要求。未知信息请留空。"/></label>
         <p className="dp-muted">支持中文与英文 · {form.content.length}/12000 · 请仅使用虚构演示数据</p><div className="dp-actions"><button className="dp-primary" disabled={busy}>保存需求</button>{current && <button type="button" onClick={() => setTab('analysis')}>前往 AI 分析 <ArrowRight size={15}/></button>}</div>
+        </fieldset>
       </form>}
       {tab === 'analysis' && <div className="dp-panel"><p className="dp-eyebrow">02 / INTELLIGENCE</p><h2>AI 智能需求分析</h2><p className="dp-muted">{current ? current.title : '请先在左侧选择一条已保存的需求。'}</p><p className="dp-callout">{workspace?.mode === 'live' ? '真实模型分析 · 输出需要人工核实。' : 'Demo 模式 · 使用保守规则提取，未调用真实大模型。'} 未明确提供的预算和交期将标记为未知。</p>
-        <button className="dp-primary" disabled={busy || !current} onClick={() => current && execute({ action: 'analyze', id: current.id, revision: current.revision }, '分析已保存。请核实原文摘录和待追问信息。')}><Sparkles size={16}/>{busy ? '处理中…' : analysis ? '重新分析' : '分析客户需求'}</button>
+        <button className="dp-primary" disabled={busy || !current} onClick={() => current && execute({ action: 'analyze', id: current.id, revision: current.revision }, '分析已保存或复用。请核实原文摘录和待追问信息。')}><Sparkles size={16}/>{busy ? '处理中…' : analysis ? '查看已保存分析' : '分析客户需求'}</button>
         {analysis && <div className="dp-analysis"><span className="dp-chip">{analysis.mode === 'demo' ? 'Demo' : '真实模型'} · 需求 V{analysis.revision}</span><dl><dt>建议服务</dt><dd>{serviceLabels[analysis.result.service]}</dd><dt>预算原文</dt><dd>{analysis.result.budget ?? '未知 · 待客户确认'}</dd><dt>币种</dt><dd>{analysis.result.currency ?? '未知'}</dd><dt>交期原文</dt><dd>{analysis.result.delivery ?? '未知 · 待客户确认'}</dd></dl><h3>核心要求（原文摘录）</h3>{analysis.result.requirements.length ? <ul>{analysis.result.requirements.map((s, i) => <li key={i}>{s}</li>)}</ul> : <p className="dp-muted">未提取核心要求，请人工核对客户原文。</p>}<h3>缺少的信息</h3><p>{analysis.result.missing.map(s => ({ budget: '预算', currency: '币种', delivery: '交付时间', scope: '详细范围' })[s]).join('、') || '模型未标记缺失项，请人工核实。'}</p><h3>建议追问（AI 建议）</h3><ul>{analysis.result.questions.map((s, i) => <li key={i}>{s}</li>)}</ul><button onClick={() => setTab('quotes')}>下一步：生成报价 <ArrowRight size={15}/></button></div>}
       </div>}
       {tab === 'quotes' && <><div className="dp-panel"><p className="dp-eyebrow">03 / QUOTATION</p><h2>生成报价草稿</h2><p className="dp-muted">{current?.title ?? '请先选择需求并完成分析。'} · AI 推荐服务，程序按价目表精确计算金额。</p><div className="dp-row"><label>报价币种<select value={currency} onChange={e => setCurrency(e.target.value)}><option>CNY</option><option>USD</option><option>EUR</option></select></label><button className="dp-primary" disabled={busy || !analysis} onClick={() => current && execute({ action: 'generateQuote', id: current.id, currency }, '报价草稿已生成。请编辑工作量、价格和说明后，人工确认。')}>生成草稿 <ArrowRight size={16}/></button></div><p className="dp-muted">不自动换汇。草稿不代表客户接受；每项默认 1 单位，需人工核对。</p></div>

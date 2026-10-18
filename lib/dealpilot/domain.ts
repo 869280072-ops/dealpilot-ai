@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { conservativeFacts, safeSourceExcerpt, isInstructionTainted, clarificationQuestions } from './evidence';
+
+export const ANALYSIS_POLICY_VERSION = 'p1-safe-v2';
 
 export const serviceSchema = z.enum(['website', 'design', 'translation', 'consulting']);
 export const currencySchema = z.enum(['CNY', 'USD', 'EUR']);
@@ -43,19 +46,28 @@ export function calculateQuote(input: unknown) {
 
 // Facts must be literal excerpts, never inferred amounts or dates. Currency is
 // accepted only with an explicit currency marker in the quoted budget excerpt.
-export function validateEvidence(value: unknown, content: string): Analysis {
+export function validateEvidence(value: unknown, content: string, language: 'zh' | 'en' = 'zh', selectedService?: Analysis['service']): Analysis {
   const result = analysisSchema.parse(value);
   for (const excerpt of [result.budget, result.delivery, ...result.requirements]) {
     if (excerpt !== null && (!excerpt.trim() || !content.includes(excerpt))) throw new Error('Unsupported AI fact');
   }
   const markers = { CNY: /人民币|RMB|CNY|¥|￥/i, USD: /美元|USD|US\$|\$/i, EUR: /欧元|EUR|€/i };
   if (result.currency && (!result.budget || !markers[result.currency].test(result.budget))) throw new Error('Unsupported currency');
-  result.missing = [...new Set([
-    ...result.missing,
+  const facts = conservativeFacts(content);
+  const supported = (excerpt: string | null, fact: string | null) => excerpt && fact && /\d/.test(excerpt) && (excerpt.includes(fact) || fact.includes(excerpt));
+  if (!supported(result.budget, facts.budget)) { result.budget = null; result.currency = null; }
+  if (!supported(result.delivery, facts.delivery)) result.delivery = null;
+  result.requirements = result.requirements.filter(s => safeSourceExcerpt(s, content));
+  if (isInstructionTainted(content) && selectedService) result.service = selectedService;
+  result.missing = [
     ...(!result.budget ? ['budget' as const] : []),
     ...(!result.currency ? ['currency' as const] : []),
-    ...(!result.delivery ? ['delivery' as const] : [])
-  ])];
+    ...(!result.delivery ? ['delivery' as const] : []),
+    ...(!result.requirements.length || result.missing.includes('scope') ? ['scope' as const] : [])
+  ];
+  // Model questions cannot introduce assumptions or numbers. Follow-ups are
+  // generated from validated missing fields, in the requested language.
+  result.questions = clarificationQuestions(result.missing, language);
   return result;
 }
 

@@ -1,6 +1,6 @@
 import { getUser } from '@/lib/db/queries';
 import { db } from '@/lib/db/drizzle';
-import { createDealPilotService, BusinessError } from '@/lib/dealpilot/service';
+import { createDealPilotService, BusinessError, RateLimitError } from '@/lib/dealpilot/service';
 import { aiMode } from '@/lib/dealpilot/ai';
 import { ZodError } from 'zod';
 import { randomUUID } from 'node:crypto';
@@ -14,6 +14,7 @@ async function handle(run: (service: ReturnType<typeof createDealPilotService>) 
     return Response.json(await run(createDealPilotService(db, user.id)), { headers });
   } catch (error) {
     if (error instanceof ZodError) return Response.json({ error: '输入格式不正确，请检查必填项及金额。' }, { status: 400, headers });
+    if (error instanceof RateLimitError) return Response.json({ error: error.message }, { status: 429, headers: { ...headers, 'Retry-After': '60' } });
     if (error instanceof BusinessError) return Response.json({ error: error.message }, { status: 409, headers });
     const errorId = randomUUID();
     console.error(JSON.stringify({ event: 'dealpilot_request_failed', errorId }));

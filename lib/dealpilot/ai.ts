@@ -1,26 +1,18 @@
 import 'server-only';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { analysisSchema, validateEvidence, type Analysis } from './domain';
 import type { z } from 'zod';
-import { requirementSchema } from './domain';
+import { requirementSchema, ANALYSIS_POLICY_VERSION } from './domain';
+import { conservativeFacts, sourceSentences } from './evidence';
 
 type Requirement = z.infer<typeof requirementSchema>;
 export function demoAnalysis(input: Requirement): Analysis {
-  // Deliberately conservative demo extraction; unsupported facts stay unknown.
-  const budget = input.content.match(/(?:人民币|RMB|CNY|USD|美元|EUR|欧元)\s*\d[\d,]*(?:\.\d{1,2})?(?:\s*元)?/i)?.[0] ?? null;
-  const delivery = input.content.match(/\d{4}年\d{1,2}月\d{1,2}日|(?:Delivery by|deliver by)\s+[A-Za-z]+ \d{1,2}, \d{4}/i)?.[0] ?? null;
-  const currency = budget ? /USD|美元/i.test(budget) ? 'USD' : /EUR|欧元/i.test(budget) ? 'EUR' : 'CNY' : null;
-  const missing: Analysis['missing'] = [];
-  if (!budget) missing.push('budget', 'currency');
-  if (!delivery) missing.push('delivery');
-  missing.push('scope');
-  const zh = input.language === 'zh';
-  return validateEvidence({ service: input.service, budget, currency, delivery, requirements: (input.content.match(/[^。.!?\n]+[。.!?]?/g) ?? []).map(s => s.trim()).filter(s => /需要|包含|适配|\bneed\b|\binclude\b/i.test(s)).slice(0, 12).map(s => s.slice(0, 500)), missing,
-    questions: [
-      ...(!budget ? [zh ? '可接受的预算范围和币种是什么？' : 'What is the budget range and currency?'] : []),
-      ...(!delivery ? [zh ? '期望何时交付？是否有硬性截止日期？' : 'What is the delivery deadline?'] : []),
-      zh ? '请确认交付清单、数量和验收标准。' : 'Please confirm deliverables, quantities and acceptance criteria.'
-    ] }, input.content);
+  const { budget, delivery } = conservativeFacts(input.content);
+  const currency = budget ? /USD|美元|\$/i.test(budget) ? 'USD' : /EUR|欧元|€/i.test(budget) ? 'EUR' : 'CNY' : null;
+  return validateEvidence({ service: input.service, budget, currency, delivery,
+    requirements: sourceSentences(input.content).filter(s => /需要|包含|适配|\bneed\b|\binclude\b/i.test(s)).slice(0, 12).map(s => s.slice(0, 500)),
+    missing: ['scope'], questions: []
+  }, input.content, input.language, input.service);
 }
 
 export function aiMode() {
@@ -29,9 +21,15 @@ export function aiMode() {
   return mode as 'demo' | 'live';
 }
 
+export function analysisProfile() {
+  const mode = aiMode();
+  const identity = mode === 'demo' ? 'conservative-demo-v2' : `${process.env.DEALPILOT_AI_ENDPOINT ?? 'https://api.openai.com/v1/chat/completions'}:${process.env.DEALPILOT_AI_MODEL ?? ''}`;
+  return { mode, profile: createHash('sha256').update(`${ANALYSIS_POLICY_VERSION}:${identity}`).digest('hex') };
+}
+
 export async function analyzeRequirement(input: Requirement) {
   const mode = aiMode();
-  if (mode === 'demo') return { mode, model: 'conservative-demo-v1', result: demoAnalysis(input) };
+  if (mode === 'demo') return { mode, model: 'conservative-demo-v2', policyVersion: ANALYSIS_POLICY_VERSION, result: demoAnalysis(input) };
   const errorId = randomUUID();
   try {
     const key = process.env.DEALPILOT_AI_API_KEY;
@@ -62,8 +60,8 @@ export async function analyzeRequirement(input: Requirement) {
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     const raw = body?.choices?.[0]?.message?.content;
     if (typeof raw !== 'string') throw new Error('invalid_response');
-    const result = validateEvidence(analysisSchema.parse(JSON.parse(raw)), input.content);
-    return { mode, model, result };
+    const result = validateEvidence(analysisSchema.parse(JSON.parse(raw)), input.content, input.language, input.service);
+    return { mode, model, policyVersion: ANALYSIS_POLICY_VERSION, result };
   } catch {
     // Never log provider bodies, customer text, authorization headers or keys.
     console.error(JSON.stringify({ event: 'dealpilot_ai_failed', errorId, mode }));

@@ -164,6 +164,7 @@ export const analyses = pgTable('requirement_analyses', {
   revision: integer('revision').notNull(),
   mode: varchar('mode', { length: 10 }).notNull(),
   model: text('model').notNull(),
+  policyVersion: varchar('policy_version', { length: 30 }).notNull().default('legacy'),
   result: jsonb('result').$type<import('@/lib/dealpilot/domain').Analysis>().notNull(),
   createdAt: timestamp('created_at').notNull().defaultNow()
 }, t => [index('analyses_requirement_revision_idx').on(t.requirementId, t.revision)]);
@@ -171,11 +172,12 @@ export const catalog = pgTable('service_catalog', {
   id: serial('id').primaryKey(),
   teamId: integer('team_id').notNull().references(() => teams.id),
   name: varchar('name', { length: 120 }).notNull(),
+  archivedAt: timestamp('archived_at'),
   service: varchar('service', { length: 30 }).notNull(),
   currency: varchar('currency', { length: 3 }).notNull(),
   unitCents: integer('unit_cents').notNull(),
   createdAt: timestamp('created_at').notNull().defaultNow()
-}, t => [index('catalog_scope_idx').on(t.teamId, t.service, t.currency), check('catalog_price_bounds', sql`${t.unitCents} >= 0 AND ${t.unitCents} <= 100000000`)]);
+}, t => [index('catalog_scope_idx').on(t.teamId, t.service, t.currency), uniqueIndex('catalog_active_item_unique').on(t.teamId, t.service, t.currency, sql`lower(btrim(${t.name}))`).where(sql`${t.archivedAt} IS NULL`), check('catalog_price_bounds', sql`${t.unitCents} >= 0 AND ${t.unitCents} <= 100000000`)]);
 export const quotations = pgTable('quotations', {
   id: serial('id').primaryKey(),
   requirementId: integer('requirement_id').notNull().references(() => requirements.id),
@@ -197,3 +199,33 @@ export const quoteHistory = pgTable('quotation_history', {
   actorId: integer('actor_id').notNull().references(() => users.id),
   createdAt: timestamp('created_at').notNull().defaultNow()
 }, t => [uniqueIndex('quote_history_revision_unique').on(t.quotationId, t.revision)]);
+
+
+export const mutationReceipts = pgTable('mutation_receipts', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').notNull().references(() => users.id),
+  teamId: integer('team_id').notNull().references(() => teams.id),
+  requestId: varchar('request_id', { length: 36 }).notNull(),
+  action: varchar('action', { length: 30 }).notNull(),
+  requestHash: varchar('request_hash', { length: 64 }).notNull(),
+  resultId: integer('result_id').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow()
+}, t => [uniqueIndex('mutation_receipts_actor_request_unique').on(t.userId, t.requestId)]);
+
+export const aiRuns = pgTable('ai_runs', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').notNull().references(() => users.id),
+  teamId: integer('team_id').notNull().references(() => teams.id),
+  requirementId: integer('requirement_id').notNull().references(() => requirements.id),
+  revision: integer('revision').notNull(),
+  mode: varchar('mode', { length: 10 }).notNull(),
+  profile: varchar('profile', { length: 64 }).notNull(),
+  status: varchar('status', { length: 10 }).notNull().default('running'),
+  analysisId: integer('analysis_id').references(() => analyses.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  finishedAt: timestamp('finished_at', { withTimezone: true })
+}, t => [
+  uniqueIndex('ai_runs_version_profile_unique').on(t.userId, t.requirementId, t.revision, t.mode, t.profile),
+  index('ai_runs_quota_idx').on(t.mode, t.userId, t.createdAt),
+  check('ai_runs_state_consistent', sql`(${t.status} = 'running' AND ${t.analysisId} IS NULL AND ${t.finishedAt} IS NULL) OR (${t.status} = 'failed' AND ${t.analysisId} IS NULL AND ${t.finishedAt} IS NOT NULL) OR (${t.status} = 'succeeded' AND ${t.analysisId} IS NOT NULL AND ${t.finishedAt} IS NOT NULL)`)
+]);
