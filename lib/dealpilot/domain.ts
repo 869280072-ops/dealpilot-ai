@@ -1,7 +1,7 @@
 import { z } from 'zod';
-import { conservativeFacts, safeSourceExcerpt, isInstructionTainted, clarificationQuestions } from './evidence';
+import { conservativeFacts, sameCompleteDate, safeSourceExcerpt, isInstructionTainted, clarificationQuestions } from './evidence';
 
-export const ANALYSIS_POLICY_VERSION = 'p1-safe-v2';
+export const ANALYSIS_POLICY_VERSION = 'p1-safe-v3';
 
 export const serviceSchema = z.enum(['website', 'design', 'translation', 'consulting']);
 export const currencySchema = z.enum(['CNY', 'USD', 'EUR']);
@@ -51,12 +51,12 @@ export function validateEvidence(value: unknown, content: string, language: 'zh'
   for (const excerpt of [result.budget, result.delivery, ...result.requirements]) {
     if (excerpt !== null && (!excerpt.trim() || !content.includes(excerpt))) throw new Error('Unsupported AI fact');
   }
-  const markers = { CNY: /人民币|RMB|CNY|¥|￥/i, USD: /美元|USD|US\$|\$/i, EUR: /欧元|EUR|€/i };
+  const markers = { CNY: /人民币|RMB|CNY|¥|￥|元/i, USD: /美元|USD|US\$|\$/i, EUR: /欧元|EUR|€/i };
   if (result.currency && (!result.budget || !markers[result.currency].test(result.budget))) throw new Error('Unsupported currency');
   const facts = conservativeFacts(content);
-  const supported = (excerpt: string | null, fact: string | null) => excerpt && fact && /\d/.test(excerpt) && (excerpt.includes(fact) || fact.includes(excerpt));
-  if (!supported(result.budget, facts.budget)) { result.budget = null; result.currency = null; }
-  if (!supported(result.delivery, facts.delivery)) result.delivery = null;
+  if (!result.budget || result.budget !== facts.budget) { result.budget = null; result.currency = null; }
+  else result.currency = facts.currency;
+  if (!sameCompleteDate(result.delivery, facts.delivery)) result.delivery = null;
   result.requirements = result.requirements.filter(s => safeSourceExcerpt(s, content));
   if (isInstructionTainted(content) && selectedService) result.service = selectedService;
   result.missing = [

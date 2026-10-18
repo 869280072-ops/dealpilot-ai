@@ -7,8 +7,7 @@ import { conservativeFacts, sourceSentences } from './evidence';
 
 type Requirement = z.infer<typeof requirementSchema>;
 export function demoAnalysis(input: Requirement): Analysis {
-  const { budget, delivery } = conservativeFacts(input.content);
-  const currency = budget ? /USD|美元|\$/i.test(budget) ? 'USD' : /EUR|欧元|€/i.test(budget) ? 'EUR' : 'CNY' : null;
+  const { budget, currency, delivery } = conservativeFacts(input.content);
   return validateEvidence({ service: input.service, budget, currency, delivery,
     requirements: sourceSentences(input.content).filter(s => /需要|包含|适配|\bneed\b|\binclude\b/i.test(s)).slice(0, 12).map(s => s.slice(0, 500)),
     missing: ['scope'], questions: []
@@ -23,13 +22,13 @@ export function aiMode() {
 
 export function analysisProfile() {
   const mode = aiMode();
-  const identity = mode === 'demo' ? 'conservative-demo-v2' : `${process.env.DEALPILOT_AI_ENDPOINT ?? 'https://api.openai.com/v1/chat/completions'}:${process.env.DEALPILOT_AI_MODEL ?? ''}`;
+  const identity = mode === 'demo' ? 'conservative-demo-v3' : `${process.env.DEALPILOT_AI_ENDPOINT ?? 'https://api.openai.com/v1/chat/completions'}:${process.env.DEALPILOT_AI_MODEL ?? ''}`;
   return { mode, profile: createHash('sha256').update(`${ANALYSIS_POLICY_VERSION}:${identity}`).digest('hex') };
 }
 
 export async function analyzeRequirement(input: Requirement) {
   const mode = aiMode();
-  if (mode === 'demo') return { mode, model: 'conservative-demo-v2', policyVersion: ANALYSIS_POLICY_VERSION, result: demoAnalysis(input) };
+  if (mode === 'demo') return { mode, model: 'conservative-demo-v3', policyVersion: ANALYSIS_POLICY_VERSION, result: demoAnalysis(input) };
   const errorId = randomUUID();
   try {
     const key = process.env.DEALPILOT_AI_API_KEY;

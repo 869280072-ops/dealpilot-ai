@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import postgres from 'postgres';
@@ -208,6 +208,24 @@ describe.skipIf(!databaseURL)('P1 isolated real PostgreSQL acceptance', () => {
       release(); await assertion; expect(fetcher).toHaveBeenCalledTimes(1);
       expect((await owner.list()).analyses.filter(a => a.requirementId === first.id)).toHaveLength(0);
     } finally { release(); vi.unstubAllGlobals(); vi.stubEnv('DEALPILOT_AI_MODE', 'demo'); }
+  });
+  it('isolates v2 cached analyses and preserves confirmed quotes and history during v3 reanalysis', async () => {
+    const requirement = await owner.execute({ action: 'saveRequirement', data: { ...demoCases[0], content: '预算人民币 10 万元。交付2026年12月15日。' } }) as typeof r;
+    const [old] = await database.insert(schema.analyses).values({ requirementId: requirement.id, revision: 1, mode: 'demo', model: 'conservative-demo-v2', policyVersion: 'p1-safe-v2', result: { service: 'website', budget: '人民币 10', currency: 'CNY', delivery: '2026年12月15日', requirements: [], missing: [], questions: [] } }).returning();
+    await database.insert(schema.aiRuns).values({ userId: ownerId, teamId, requirementId: requirement.id, revision: 1, mode: 'demo', profile: createHash('sha256').update('p1-safe-v2:conservative-demo-v2').digest('hex'), status: 'succeeded', analysisId: old.id, finishedAt: new Date() });
+    const [oldDraft] = await database.insert(schema.quotations).values({ requirementId: requirement.id, requirementRevision: 1, analysisId: old.id, data: { currency: 'CNY', language: 'zh', description: '虚构旧策略草稿', lines: [{ name: '包', quantity: 1, unitCents: 100 }], totalCents: 100 } }).returning();
+    await expect(owner.execute({ action: 'generateQuote', requestId: randomUUID(), id: requirement.id, currency: 'CNY' })).rejects.toThrow('旧安全策略');
+    await expect(owner.execute({ action: 'confirmQuote', id: oldDraft.id, revision: 1, confirmed: true })).rejects.toThrow('旧安全策略');
+    const before = await owner.list();
+    const command = { action: 'analyze', id: requirement.id, revision: 1 };
+    const fresh = await owner.execute(command) as typeof old;
+    expect(fresh.id).not.toBe(old.id); expect(fresh.policyVersion).toBe('p1-safe-v3'); expect(fresh.result.budget).toBe('人民币 10 万元');
+    expect((await owner.execute(command) as typeof old).id).toBe(fresh.id);
+    expect((await database.select().from(schema.analyses).where(eq(schema.analyses.id, old.id)))[0]).toEqual(old);
+    expect(await database.select().from(schema.aiRuns).where(eq(schema.aiRuns.requirementId, requirement.id))).toHaveLength(2);
+    const after = await owner.list();
+    expect(after.quotations).toEqual(before.quotations); expect(after.history).toEqual(before.history);
+    expect(after.quotations.find(row => row.id === q.id)?.status).toBe('confirmed');
   });
   it('revoked team membership and deleted users cannot access persisted data', async () => {
     await database.delete(schema.teamMembers).where(eq(schema.teamMembers.userId, memberId));

@@ -31,3 +31,23 @@ it('suppresses injected literal facts in a live-mode simulated response and repl
   const output = await analyzeRequirement({ ...demoCases[2], content });
   expect(output.mode).toBe('live'); expect(output.result.service).toBe('translation'); expect(output.result.budget).toBeNull(); expect(output.result.delivery).toBeNull(); expect(output.result.questions.join('')).not.toMatch(/\d/);
 });
+it.each([
+  ['Budget USD 2 million.', 'USD 2', 'USD'],
+  ['Budget USD 1000.', 'USD 1', 'USD'], ['Budget USD 1000.', 'USD 10', 'USD'],
+  ['预算人民币 10 万元。', '人民币 10', 'CNY'], ['预算10万元。', '10万', null]
+])('rejects live simulated model partial money even when it is a literal substring: %s', async (content, budget, currency) => {
+  fetcher.mockResolvedValue(response({ ...result, budget, currency, questions: ['May we assume USD 999?'] }));
+  const output = await analyzeRequirement({ ...demoCases[0], content });
+  expect(output.result.budget).toBeNull(); expect(output.result.currency).toBeNull(); expect(output.result.questions.join('')).not.toContain('999');
+});
+it('rejects a live simulated model partial year', async () => {
+  fetcher.mockResolvedValue(response({ ...result, delivery: '2026' }));
+  expect((await analyzeRequirement({ ...demoCases[0], content: '交付日期2026年12月15日。' })).result.delivery).toBeNull();
+});
+it('accepts complete supported live facts using the same policy as demo', async () => {
+  const input = { ...demoCases[1], content: 'Budget USD 2 million. Deadline 2026-12-15.' };
+  fetcher.mockResolvedValue(response({ ...result, budget: 'USD 2 million', currency: 'USD', delivery: '2026-12-15' }));
+  const live = await analyzeRequirement(input);
+  vi.stubEnv('DEALPILOT_AI_MODE', 'demo'); const demo = await analyzeRequirement(input);
+  expect(live.policyVersion).toBe('p1-safe-v3'); expect(live.result.budget).toBe(demo.result.budget); expect(live.result.delivery).toBe(demo.result.delivery);
+});
