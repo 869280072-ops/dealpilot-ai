@@ -1,3 +1,4 @@
+import { legacyPaymentsEnabled } from '@/lib/env';
 import { checkoutAction } from '@/lib/payments/actions';
 import { Check } from 'lucide-react';
 import { getStripePrices, getStripeProducts } from '@/lib/payments/stripe';
@@ -7,6 +8,7 @@ import { SubmitButton } from './submit-button';
 export const revalidate = 3600;
 
 export default async function PricingPage() {
+  if (!legacyPaymentsEnabled()) return <main className="p-8">Payments are currently unavailable.</main>;
   const [prices, products] = await Promise.all([
     getStripePrices(),
     getStripeProducts(),

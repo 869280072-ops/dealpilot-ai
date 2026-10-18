@@ -39,3 +39,12 @@ next-env.d.ts
 # Docker
 postgres_data/
 .env*.local
+
+# Local development caches and test output
+.cache/
+.pnpm-store/
+/test-results/
+
+# Ignore every environment variant; commit only the documented template.
+.env*
+!.env.example

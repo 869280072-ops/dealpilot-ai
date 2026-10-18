@@ -34,7 +34,7 @@ async function checkStripeCLI() {
     try {
       await execAsync('stripe config --list');
       console.log('Stripe CLI is authenticated.');
-    } catch (error) {
+    } catch {
       console.log(
         'Stripe CLI is not authenticated or the authentication has expired.'
       );
@@ -53,14 +53,14 @@ async function checkStripeCLI() {
       try {
         await execAsync('stripe config --list');
         console.log('Stripe CLI authentication confirmed.');
-      } catch (error) {
+      } catch {
         console.error(
           'Failed to verify Stripe CLI authentication. Please try again.'
         );
         process.exit(1);
       }
     }
-  } catch (error) {
+  } catch {
     console.error(
       'Stripe CLI is not installed. Please install it and try again.'
     );
@@ -100,7 +100,7 @@ async function setupLocalPostgres() {
   try {
     await execAsync('docker --version');
     console.log('Docker is installed.');
-  } catch (error) {
+  } catch {
     console.error(
       'Docker is not installed. Please install Docker and try again.'
     );
@@ -139,7 +139,7 @@ volumes:
   try {
     await execAsync('docker compose up -d');
     console.log('Docker container started successfully.');
-  } catch (error) {
+  } catch {
     console.error(
       'Failed to start Docker container. Please check your Docker installation and try again.'
     );
@@ -165,7 +165,7 @@ async function createStripeWebhook(): Promise<string> {
     }
     console.log('Stripe webhook created.');
     return match[0];
-  } catch (error) {
+  } catch {
     console.error(
       'Failed to create Stripe webhook. Check your Stripe CLI installation and permissions.'
     );
@@ -174,7 +174,7 @@ async function createStripeWebhook(): Promise<string> {
         'Note: On Windows, you may need to run this script as an administrator.'
       );
     }
-    throw error;
+    throw new Error('Stripe development setup failed');
   }
 }
 
@@ -189,7 +189,7 @@ async function writeEnvFile(envVars: Record<string, string>) {
     .map(([key, value]) => `${key}=${value}`)
     .join('\n');
 
-  await fs.writeFile(path.join(process.cwd(), '.env'), envContent);
+  await fs.writeFile(path.join(process.cwd(), '.env'), envContent, { flag: 'wx', mode: 0o600 });
   console.log('.env file created with the necessary variables.');
 }
 
@@ -213,4 +213,4 @@ async function main() {
   console.log('🎉 Setup completed successfully!');
 }
 
-main().catch(console.error);
+main().catch(() => { console.error('Development setup failed'); process.exitCode = 1; });

@@ -1,7 +1,7 @@
 'use client';
 
 import { Button } from '@/components/ui/button';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   Card,
   CardContent,
@@ -188,8 +188,9 @@ function InviteTeamMemberSkeleton() {
 }
 
 function InviteTeamMember() {
-  const { data: user } = useSWR<User>('/api/user', fetcher);
-  const isOwner = user?.role === 'owner';
+  const { data: user } = useSWR<import('@/lib/auth/public-user').PublicUser>('/api/user', fetcher);
+  const { data: team } = useSWR<TeamDataWithMembers>('/api/team', fetcher);
+  const isOwner = team?.teamMembers.some((member) => member.userId === user?.id && member.role === 'owner') ?? false;
   const [inviteState, inviteAction, isInvitePending] = useActionState<
     ActionState,
     FormData

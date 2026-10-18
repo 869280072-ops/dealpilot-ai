@@ -1,20 +1,21 @@
 import { z } from 'zod';
 import { TeamDataWithMembers, User } from '@/lib/db/schema';
-import { getTeamForUser, getUser } from '@/lib/db/queries';
+import { getTeamForUser, getAuthenticatedUser, getCurrentMembership } from '@/lib/db/queries';
 import { redirect } from 'next/navigation';
 
 export type ActionState = {
   error?: string;
   success?: string;
-  [key: string]: any; // This allows for additional properties
+  email?: string;
+  [key: string]: unknown;
 };
 
-type ValidatedActionFunction<S extends z.ZodType<any, any>, T> = (
+type ValidatedActionFunction<S extends z.ZodTypeAny, T> = (
   data: z.infer<S>,
   formData: FormData
 ) => Promise<T>;
 
-export function validatedAction<S extends z.ZodType<any, any>, T>(
+export function validatedAction<S extends z.ZodTypeAny, T>(
   schema: S,
   action: ValidatedActionFunction<S, T>
 ) {
@@ -28,18 +29,18 @@ export function validatedAction<S extends z.ZodType<any, any>, T>(
   };
 }
 
-type ValidatedActionWithUserFunction<S extends z.ZodType<any, any>, T> = (
+type ValidatedActionWithUserFunction<S extends z.ZodTypeAny, T> = (
   data: z.infer<S>,
   formData: FormData,
   user: User
 ) => Promise<T>;
 
-export function validatedActionWithUser<S extends z.ZodType<any, any>, T>(
+export function validatedActionWithUser<S extends z.ZodTypeAny, T>(
   schema: S,
   action: ValidatedActionWithUserFunction<S, T>
 ) {
   return async (prevState: ActionState, formData: FormData) => {
-    const user = await getUser();
+    const user = await getAuthenticatedUser();
     if (!user) {
       throw new Error('User is not authenticated');
     }
@@ -60,7 +61,7 @@ type ActionWithTeamFunction<T> = (
 
 export function withTeam<T>(action: ActionWithTeamFunction<T>) {
   return async (formData: FormData): Promise<T> => {
-    const user = await getUser();
+    const user = await getAuthenticatedUser();
     if (!user) {
       redirect('/sign-in');
     }
@@ -70,6 +71,10 @@ export function withTeam<T>(action: ActionWithTeamFunction<T>) {
       throw new Error('Team not found');
     }
 
+    const membership = await getCurrentMembership();
+    if (!membership || membership.teamId !== team.id || membership.role !== 'owner') {
+      throw new Error('Forbidden');
+    }
     return action(formData, team);
   };
 }
