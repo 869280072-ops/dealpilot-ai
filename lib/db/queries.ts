@@ -1,27 +1,13 @@
 import { desc, and, eq, isNull } from 'drizzle-orm';
 import { db } from './drizzle';
 import { activityLogs, teamMembers, teams, users } from './schema';
-import { cookies } from 'next/headers';
-import { verifyToken } from '@/lib/auth/session';
+import 'server-only';
+import { getSession, matchesCredentialVersion } from '@/lib/auth/session';
+import { toPublicUser } from '@/lib/auth/public-user';
 
-export async function getUser() {
-  const sessionCookie = (await cookies()).get('session');
-  if (!sessionCookie || !sessionCookie.value) {
-    return null;
-  }
-
-  const sessionData = await verifyToken(sessionCookie.value);
-  if (
-    !sessionData ||
-    !sessionData.user ||
-    typeof sessionData.user.id !== 'number'
-  ) {
-    return null;
-  }
-
-  if (new Date(sessionData.expires) < new Date()) {
-    return null;
-  }
+export async function getAuthenticatedUser() {
+  const sessionData = await getSession();
+  if (!sessionData) return null;
 
   const user = await db
     .select()
@@ -33,7 +19,21 @@ export async function getUser() {
     return null;
   }
 
+  if (!matchesCredentialVersion(user[0].passwordHash, sessionData.credentialVersion)) return null;
   return user[0];
+}
+
+export async function getUser() {
+  const user = await getAuthenticatedUser();
+  return user ? toPublicUser(user) : null;
+}
+
+export async function getCurrentMembership() {
+  const user = await getUser();
+  if (!user) return null;
+  return await db.query.teamMembers.findFirst({
+    where: eq(teamMembers.userId, user.id), orderBy: teamMembers.id
+  }) ?? null;
 }
 
 export async function getTeamByStripeCustomerId(customerId: string) {
@@ -109,6 +109,7 @@ export async function getTeamForUser() {
     where: eq(teamMembers.userId, user.id),
     with: {
       team: {
+        columns: { id: true, name: true, planName: true, subscriptionStatus: true },
         with: {
           teamMembers: {
             with: {

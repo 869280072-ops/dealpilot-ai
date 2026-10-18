@@ -1,10 +1,5 @@
 import type { NextConfig } from 'next';
 
-const nextConfig: NextConfig = {
-  experimental: {
-    ppr: true,
-    clientSegmentCache: true
-  }
-};
-
+// P0 baseline intentionally uses stable rendering and caching defaults.
+const nextConfig: NextConfig = {};
 export default nextConfig;

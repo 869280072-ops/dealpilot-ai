@@ -1,15 +1,22 @@
+import 'server-only';
+import { legacyPaymentsEnabled } from '@/lib/env';
 import Stripe from 'stripe';
 import { redirect } from 'next/navigation';
 import { Team } from '@/lib/db/schema';
 import {
   getTeamByStripeCustomerId,
   getUser,
+  getCurrentMembership,
   updateTeamSubscription
 } from '@/lib/db/queries';
 
-export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2025-04-30.basil'
-});
+let client: Stripe | undefined;
+export function getStripe() {
+  if (!legacyPaymentsEnabled()) throw new Error('Legacy payments are disabled');
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error('Legacy Stripe configuration is missing');
+  return client ??= new Stripe(key, { apiVersion: '2025-04-30.basil' });
+}
 
 export async function createCheckoutSession({
   team,
@@ -17,14 +24,17 @@ export async function createCheckoutSession({
 }: {
   team: Team | null;
   priceId: string;
-}) {
+}): Promise<never> {
   const user = await getUser();
 
   if (!team || !user) {
     redirect(`/sign-up?redirect=checkout&priceId=${priceId}`);
   }
 
-  const session = await stripe.checkout.sessions.create({
+  const membership = await getCurrentMembership();
+  if (!membership || membership.teamId !== team.id || membership.role !== 'owner') throw new Error('Forbidden');
+
+  const session = await getStripe().checkout.sessions.create({
     payment_method_types: ['card'],
     line_items: [
       {
@@ -33,6 +43,7 @@ export async function createCheckoutSession({
       }
     ],
     mode: 'subscription',
+    metadata: { teamId: String(team.id) },
     success_url: `${process.env.BASE_URL}/api/stripe/checkout?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url: `${process.env.BASE_URL}/pricing`,
     customer: team.stripeCustomerId || undefined,
@@ -47,22 +58,24 @@ export async function createCheckoutSession({
 }
 
 export async function createCustomerPortalSession(team: Team) {
+  const membership = await getCurrentMembership();
+  if (!membership || membership.teamId !== team.id || membership.role !== 'owner') throw new Error('Forbidden');
   if (!team.stripeCustomerId || !team.stripeProductId) {
     redirect('/pricing');
   }
 
   let configuration: Stripe.BillingPortal.Configuration;
-  const configurations = await stripe.billingPortal.configurations.list();
+  const configurations = await getStripe().billingPortal.configurations.list();
 
   if (configurations.data.length > 0) {
     configuration = configurations.data[0];
   } else {
-    const product = await stripe.products.retrieve(team.stripeProductId);
+    const product = await getStripe().products.retrieve(team.stripeProductId);
     if (!product.active) {
       throw new Error("Team's product is not active in Stripe");
     }
 
-    const prices = await stripe.prices.list({
+    const prices = await getStripe().prices.list({
       product: product.id,
       active: true
     });
@@ -70,7 +83,7 @@ export async function createCustomerPortalSession(team: Team) {
       throw new Error("No active prices found for the team's product");
     }
 
-    configuration = await stripe.billingPortal.configurations.create({
+    configuration = await getStripe().billingPortal.configurations.create({
       business_profile: {
         headline: 'Manage your subscription'
       },
@@ -107,7 +120,7 @@ export async function createCustomerPortalSession(team: Team) {
     });
   }
 
-  return stripe.billingPortal.sessions.create({
+  return getStripe().billingPortal.sessions.create({
     customer: team.stripeCustomerId,
     return_url: `${process.env.BASE_URL}/dashboard`,
     configuration: configuration.id
@@ -117,37 +130,26 @@ export async function createCustomerPortalSession(team: Team) {
 export async function handleSubscriptionChange(
   subscription: Stripe.Subscription
 ) {
-  const customerId = subscription.customer as string;
-  const subscriptionId = subscription.id;
-  const status = subscription.status;
-
+  // Re-fetch authoritative state: duplicate or delayed signed events cannot restore stale rights.
+  const current = await getStripe().subscriptions.retrieve(subscription.id, {
+    expand: ['items.data.price.product']
+  });
+  const customerId = typeof current.customer === 'string' ? current.customer : current.customer.id;
   const team = await getTeamByStripeCustomerId(customerId);
-
-  if (!team) {
-    console.error('Team not found for Stripe customer:', customerId);
-    return;
-  }
-
-  if (status === 'active' || status === 'trialing') {
-    const plan = subscription.items.data[0]?.plan;
-    await updateTeamSubscription(team.id, {
-      stripeSubscriptionId: subscriptionId,
-      stripeProductId: plan?.product as string,
-      planName: (plan?.product as Stripe.Product).name,
-      subscriptionStatus: status
-    });
-  } else if (status === 'canceled' || status === 'unpaid') {
-    await updateTeamSubscription(team.id, {
-      stripeSubscriptionId: null,
-      stripeProductId: null,
-      planName: null,
-      subscriptionStatus: status
-    });
-  }
+  // Initial payment binding requires a persisted local order; browser redirects cannot create it.
+  if (!team || team.stripeSubscriptionId !== current.id) throw new Error('Unbound subscription');
+  const entitled = current.status === 'active' || current.status === 'trialing';
+  const product = current.items.data[0]?.price.product;
+  await updateTeamSubscription(team.id, {
+    stripeSubscriptionId: current.id,
+    stripeProductId: entitled ? (typeof product === 'string' ? product : product?.id ?? null) : null,
+    planName: entitled && typeof product === 'object' && !('deleted' in product) ? product.name : null,
+    subscriptionStatus: current.status
+  });
 }
 
 export async function getStripePrices() {
-  const prices = await stripe.prices.list({
+  const prices = await getStripe().prices.list({
     expand: ['data.product'],
     active: true,
     type: 'recurring'
@@ -165,7 +167,7 @@ export async function getStripePrices() {
 }
 
 export async function getStripeProducts() {
-  const products = await stripe.products.list({
+  const products = await getStripe().products.list({
     active: true,
     expand: ['data.default_price']
   });

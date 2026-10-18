@@ -1,0 +1,30 @@
+name: P0 baseline
+on:
+  pull_request:
+  push:
+    branches: [main, security/p0-baseline]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      AUTH_SECRET: ci-only-synthetic-secret-at-least-thirty-two-bytes
+      POSTGRES_URL: postgres://unused@127.0.0.1:1/unused
+      LEGACY_STRIPE_ENABLED: 'false'
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm lint
+      - run: pnpm build
+      - run: pnpm typecheck
+      - run: pnpm audit --prod
