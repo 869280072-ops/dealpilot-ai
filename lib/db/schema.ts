@@ -1,12 +1,16 @@
 import {
   pgTable,
+  jsonb,
+  index,
+  uniqueIndex,
+  check,
   serial,
   varchar,
   text,
   timestamp,
   integer,
 } from 'drizzle-orm/pg-core';
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 
 export const users = pgTable('users', {
   id: serial('id').primaryKey(),
@@ -140,3 +144,56 @@ export enum ActivityType {
   INVITE_TEAM_MEMBER = 'INVITE_TEAM_MEMBER',
   ACCEPT_INVITATION = 'ACCEPT_INVITATION',
 }
+
+// P1 private customer records. All access goes through the authorized service.
+export const requirements = pgTable('requirements', {
+  id: serial('id').primaryKey(),
+  userId: integer('user_id').notNull().references(() => users.id),
+  teamId: integer('team_id').notNull().references(() => teams.id),
+  title: varchar('title', { length: 120 }).notNull(),
+  content: text('content').notNull(),
+  service: varchar('service', { length: 30 }).notNull(),
+  language: varchar('language', { length: 2 }).notNull(),
+  revision: integer('revision').notNull().default(1),
+  createdAt: timestamp('created_at').notNull().defaultNow(),
+  updatedAt: timestamp('updated_at').notNull().defaultNow()
+}, t => [index('requirements_scope_idx').on(t.userId, t.teamId), check('requirements_revision_positive', sql`${t.revision} > 0`)]);
+export const analyses = pgTable('requirement_analyses', {
+  id: serial('id').primaryKey(),
+  requirementId: integer('requirement_id').notNull().references(() => requirements.id),
+  revision: integer('revision').notNull(),
+  mode: varchar('mode', { length: 10 }).notNull(),
+  model: text('model').notNull(),
+  result: jsonb('result').$type<import('@/lib/dealpilot/domain').Analysis>().notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow()
+}, t => [index('analyses_requirement_revision_idx').on(t.requirementId, t.revision)]);
+export const catalog = pgTable('service_catalog', {
+  id: serial('id').primaryKey(),
+  teamId: integer('team_id').notNull().references(() => teams.id),
+  name: varchar('name', { length: 120 }).notNull(),
+  service: varchar('service', { length: 30 }).notNull(),
+  currency: varchar('currency', { length: 3 }).notNull(),
+  unitCents: integer('unit_cents').notNull(),
+  createdAt: timestamp('created_at').notNull().defaultNow()
+}, t => [index('catalog_scope_idx').on(t.teamId, t.service, t.currency), check('catalog_price_bounds', sql`${t.unitCents} >= 0 AND ${t.unitCents} <= 100000000`)]);
+export const quotations = pgTable('quotations', {
+  id: serial('id').primaryKey(),
+  requirementId: integer('requirement_id').notNull().references(() => requirements.id),
+  requirementRevision: integer('requirement_revision').notNull(),
+  analysisId: integer('analysis_id').notNull().references(() => analyses.id),
+  revision: integer('revision').notNull().default(1),
+  status: varchar('status', { length: 10 }).notNull().default('draft'),
+  data: jsonb('data').$type<import('@/lib/dealpilot/domain').QuoteInput & { totalCents: number }>().notNull(),
+  confirmedAt: timestamp('confirmed_at'),
+  confirmedBy: integer('confirmed_by').references(() => users.id),
+  createdAt: timestamp('created_at').notNull().defaultNow()
+}, t => [index('quotes_requirement_idx').on(t.requirementId), check('quote_confirmation_consistent', sql`(${t.status} = 'draft' AND ${t.confirmedAt} IS NULL AND ${t.confirmedBy} IS NULL) OR (${t.status} = 'confirmed' AND ${t.confirmedAt} IS NOT NULL AND ${t.confirmedBy} IS NOT NULL)`)]);
+export const quoteHistory = pgTable('quotation_history', {
+  id: serial('id').primaryKey(),
+  quotationId: integer('quotation_id').notNull().references(() => quotations.id),
+  revision: integer('revision').notNull(),
+  status: varchar('status', { length: 10 }).notNull(),
+  data: jsonb('data').$type<import('@/lib/dealpilot/domain').QuoteInput & { totalCents: number }>().notNull(),
+  actorId: integer('actor_id').notNull().references(() => users.id),
+  createdAt: timestamp('created_at').notNull().defaultNow()
+}, t => [uniqueIndex('quote_history_revision_unique').on(t.quotationId, t.revision)]);

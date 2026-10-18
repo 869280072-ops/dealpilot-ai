@@ -4,8 +4,8 @@ import { getUser, getTeamForUser } from '@/lib/db/queries';
 import { SWRConfig } from 'swr';
 
 export const metadata: Metadata = {
-  title: 'Next.js SaaS Starter',
-  description: 'Get started quickly with Next.js, Postgres, and Stripe.'
+  title: 'DealPilot AI | 智能需求与报价',
+  description: '客户需求管理、AI 需求分析与人工确认报价工作台。'
 };
 
 export const viewport: Viewport = {
@@ -20,7 +20,7 @@ export default function RootLayout({
 }) {
   return (
     <html
-      lang="en"
+      lang="zh-CN"
       className={`bg-white dark:bg-gray-950 text-black dark:text-white font-sans`}
     >
       <body className="min-h-[100dvh] bg-gray-50">
