@@ -1,6 +1,5 @@
 import 'server-only';
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { compare, hash } from 'bcryptjs';
 import { SignJWT, jwtVerify } from 'jose';
 import { cookies } from 'next/headers';
 import { z } from 'zod';
@@ -13,8 +12,7 @@ const sessionSchema = z.object({
   credentialVersion: z.string().length(64)
 });
 export type SessionData = z.infer<typeof sessionSchema>;
-export const hashPassword = (password: string) => hash(password, 10);
-export const comparePasswords = (plain: string, hashed: string) => compare(plain, hashed);
+export { hashPassword, comparePasswords } from './passwords';
 
 // Revokes tokens on password changes without putting password hashes in JWTs.
 export function credentialVersion(passwordHash: string) {
