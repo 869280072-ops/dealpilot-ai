@@ -48,3 +48,6 @@ postgres_data/
 # Ignore every environment variant; commit only the documented template.
 .env*
 !.env.example
+
+# Task scratch files and local verification evidence
+/work/

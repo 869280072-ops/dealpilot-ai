@@ -1,6 +1,8 @@
-# DealPilot AI — P0 Development Baseline
+# DealPilot AI — P1 AI Requirements & Quotation MVP
 
-DealPilot AI builds on the Next.js SaaS Starter. This branch establishes an authentication, authorization and development baseline; it does not implement AI Agent functionality or a production-ready payment flow.
+DealPilot AI builds on the Next.js SaaS Starter and the merged P0 security baseline. P1 adds a working Chinese-first requirements, AI analysis and quotation workspace at `/dashboard/workbench`. See [P1 development and acceptance report](docs/P1-MVP.md) for migration steps, synthetic demos, configuration and test evidence.
+
+P1 supports private bilingual requirements, structured AI analysis with explicit Demo/live modes, owner-managed team price catalogs, deterministic CNY/USD/EUR quote calculation, manual editing, explicit human confirmation and versioned history. Keep `LEGACY_STRIPE_ENABLED=false`.
 
 ## Current capabilities and limits
 
@@ -68,6 +70,16 @@ pnpm dev
 ```
 
 Open http://localhost:3000. Existing sessions from before the P0 credential-version change must sign in again.
+
+## P1 blocker fixes
+
+See [P1 blocker fix report](docs/P1-BLOCKER-FIXES.md) for B1–B3, migration 0003, idempotency keys, durable AI request deduplication, rolling quotas and repeatable regression scripts. Apply migrations before running this branch. Successful same-version analyses are reused; failed/uncertain calls are not automatically retried. Real model tests remain opt-in and were not performed.
+
+## P1 workspace
+
+After migrating a dedicated local development database and signing up, open `/dashboard/workbench`. As team owner, add service prices in the required currency, then load a fictional demo, save it, analyze it and generate a draft. Review and save edits before explicitly confirming. Confirmed quotations are locked.
+
+`DEALPILOT_AI_MODE=demo` is the default and calls no model. For a real OpenAI-compatible model, configure server-only `DEALPILOT_AI_MODE=live`, `DEALPILOT_AI_API_KEY`, `DEALPILOT_AI_MODEL` and optionally `DEALPILOT_AI_ENDPOINT`. Never expose a key using `NEXT_PUBLIC_`. Live failures do not silently become demos. See [the P1 report](docs/P1-MVP.md) for the provider protocol, limits and isolated PostgreSQL tests.
 
 ## Verification
 
